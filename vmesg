@@ -1,0 +1,50 @@
+#!/usr/bin/env python3
+
+import curses
+import vk
+from time import sleep
+
+_VERSION = 0.1
+_APP_ID = 5586370
+
+def auth(stdscr):
+    #vk.logger.disabled = True
+    notLogged = True
+    while notLogged:
+        stdscr.clear()
+        stdscr.addstr(1, 1, "vmesg " + str(_VERSION))
+        stdscr.addstr(3, 1, "Login: ")
+        curses.curs_set(1)
+        curses.echo()
+        vklogin = stdscr.getstr()
+        stdscr.addstr(4, 1, "Password: ")
+        curses.noecho()
+        vkpass = stdscr.getstr()
+        curses.curs_set(0)
+        stdscr.addstr(6, 1, "Authorizing...")
+        stdscr.refresh()
+        try:
+            vksession = vk.AuthSession( app_id=_APP_ID, 
+                                        user_login=vklogin, 
+                                        user_password=vkpass, 
+                                        scope='messages')
+        except vk.exceptions.VkAuthError:
+            stdscr.addstr(7, 1, "Incorrect login or password")
+            stdscr.refresh()
+            sleep(3)
+        else:
+            notLogged = False
+    return vk.API(vksession)
+
+def finit():
+    curses.endwin()
+
+def main(stdscr):
+    curses.use_default_colors()
+    api = auth(stdscr)
+    stdscr.addstr(7, 1, "Welcome, " + api.account.getProfileInfo()["first_name"])
+    sleep(3)
+    stdscr.getch()
+    finit()
+
+curses.wrapper(main)
