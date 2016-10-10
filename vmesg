@@ -6,12 +6,45 @@ from time import sleep
 
 _VERSION = 0.1
 _APP_ID = 5586370
+_API_VERSION = '5.57'
+
+class _dialogs:
+    topPos = 0
+    def initWindow(self, stdscr):
+        y, x = stdscr.getmaxyx()
+        self.box = stdscr.subwin(y, x // 4, 0, 0)
+        self.box.box()
+        self.window = self.box.derwin(y - 2, x // 4 - 2, 1, 1)
+    def update(self, api):
+        y, x = self.window.getmaxyx()
+        dialogs = api.execute(v = _API_VERSION, code = """
+                            var dialogs = API.messages.getDialogs({"count": 20});
+                            return {"total": dialogs.count,
+                                    "unread": dialogs.unread_dialogs,
+                                    "titles": dialogs.items@.message@.title,
+                                    "name": API.users.get({"user_ids": dialogs.items@.message@.user_id})};""")
+        self.box.addstr(0, 2, "Dialogs: " + str(dialogs["total"]))
+        for i in range(0, y):
+            if dialogs["titles"][i] == " ... ":
+                self.window.addstr(i, 1,    dialogs["name"][i]["first_name"] + " " + 
+                                            dialogs["name"][i]["last_name"])
+            else:
+                self.window.addstr(i, 1,    dialogs["titles"][i])
+
+class _messages:
+    def initWindow(self, stdscr):
+        y, x = stdscr.getmaxyx()
+        self.box = stdscr.subwin(y, 3 * x // 4, 0, x // 4)
+        self.box.box()
+        self.window = self.box.derwin(y - 2, 3 * x // 4 - 2, 1, 1)
+    def update(self):
+        pass
 
 def auth(stdscr):
-    #vk.logger.disabled = True
+    vk.logger.disabled = True
     notLogged = True
     while notLogged:
-        stdscr.clear()
+        # Get login and password
         stdscr.addstr(1, 1, "vmesg " + str(_VERSION))
         stdscr.addstr(3, 1, "Login: ")
         curses.curs_set(1)
@@ -23,18 +56,25 @@ def auth(stdscr):
         curses.curs_set(0)
         stdscr.addstr(6, 1, "Authorizing...")
         stdscr.refresh()
+
+        # Authorization
         try:
             vksession = vk.AuthSession( app_id=_APP_ID, 
                                         user_login=vklogin, 
                                         user_password=vkpass, 
-                                        scope='messages')
+                                        scope='messages' )
         except vk.exceptions.VkAuthError:
             stdscr.addstr(7, 1, "Incorrect login or password")
             stdscr.refresh()
-            sleep(3)
         else:
             notLogged = False
-    return vk.API(vksession)
+            api = vk.API(vksession)
+            stdscr.addstr(7, 1, "Welcome, " + api.account.getProfileInfo(v = _API_VERSION)["first_name"])
+            stdscr.refresh()
+        finally:
+            sleep(1)
+            stdscr.clear()
+    return api
 
 def finit():
     curses.endwin()
@@ -42,8 +82,13 @@ def finit():
 def main(stdscr):
     curses.use_default_colors()
     api = auth(stdscr)
-    stdscr.addstr(7, 1, "Welcome, " + api.account.getProfileInfo()["first_name"])
-    sleep(3)
+
+    Dialogs = _dialogs()
+    Dialogs.initWindow(stdscr)
+    Messages = _messages()
+    Messages.initWindow(stdscr)
+    
+    Dialogs.update(api)
     stdscr.getch()
     finit()
 
