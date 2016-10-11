@@ -7,31 +7,43 @@ from time import sleep
 _VERSION = 0.1
 _APP_ID = 5586370
 _API_VERSION = '5.57'
+_RED = 1
 
 class _dialogs:
     topPos = 0
+    active = True
     def initWindow(self, stdscr):
         y, x = stdscr.getmaxyx()
         self.box = stdscr.subwin(y, x // 4, 0, 0)
         self.box.box()
         self.window = self.box.derwin(y - 2, x // 4 - 2, 1, 1)
     def update(self, api):
-        y, x = self.window.getmaxyx()
         dialogs = api.execute(v = _API_VERSION, code = """
                             var dialogs = API.messages.getDialogs({"count": 20});
                             return {"total": dialogs.count,
-                                    "unread": dialogs.unread_dialogs,
+                                    "total_unread": dialogs.unread_dialogs,
                                     "titles": dialogs.items@.message@.title,
+                                    "unread": dialogs.items@.unread,
                                     "name": API.users.get({"user_ids": dialogs.items@.message@.user_id})};""")
-        self.box.addstr(0, 2, "Dialogs: " + str(dialogs["total"]))
+        self.box.addstr(0, 2, "Dialogs: " + str(dialogs["total"]), curses.A_BOLD)
+        self.box.addstr(" (" + str(dialogs["total_unread"]) + ")", curses.color_pair(_RED) | curses.A_BOLD)
+
+        y, x = self.window.getmaxyx()
         for i in range(0, y):
+            # Mark unread dialogs 
+            self.window.addstr(i, 1, "" if dialogs["unread"][i] is None else 
+                "(" + str(dialogs["unread"][i]) + ") ", curses.color_pair(_RED) | curses.A_BOLD)
+            # Get conference titles
             if dialogs["titles"][i] == " ... ":
-                self.window.addstr(i, 1,    dialogs["name"][i]["first_name"] + " " + 
-                                            dialogs["name"][i]["last_name"])
+                self.window.addnstr(dialogs["name"][i]["first_name"] + " " + 
+                                    dialogs["name"][i]["last_name"], x - 2)
+            # Get user's names
             else:
-                self.window.addstr(i, 1,    dialogs["titles"][i])
+                self.window.addnstr(dialogs["titles"][i], x - 2, curses.A_BOLD)
+
 
 class _messages:
+    active = False
     def initWindow(self, stdscr):
         y, x = stdscr.getmaxyx()
         self.box = stdscr.subwin(y, 3 * x // 4, 0, x // 4)
@@ -39,6 +51,7 @@ class _messages:
         self.window = self.box.derwin(y - 2, 3 * x // 4 - 2, 1, 1)
     def update(self):
         pass
+
 
 def auth(stdscr):
     vk.logger.disabled = True
@@ -76,11 +89,15 @@ def auth(stdscr):
             stdscr.clear()
     return api
 
+
 def finit():
     curses.endwin()
 
+
 def main(stdscr):
+    curses.start_color()
     curses.use_default_colors()
+    curses.init_pair(_RED, curses.COLOR_RED, -1)
     api = auth(stdscr)
 
     Dialogs = _dialogs()
