@@ -10,67 +10,96 @@ _VERSION = 0.1
 _APP_ID = 5586370
 _API_VERSION = '5.57'
 
+DialogsToken = 0
+MessagesToken = 1
+
 
 class _dialogs:
-    topPos = 0
+    # top - index of top drawed dialog, pos - current position in list
+    top = 0
+    pos = 0
     active = True        
-    # Every 'interval' seconds ask for update
-    interval = 1
+    # Every 'updateInterval' seconds ask for update
+    updateInterval = 1
+    # Redraw every 'redrawInterval' seconds
+    redrawInterval = 0.2
+    # Response to request
+    response = {}
 
-    def __init__(self, stdscr, RequestConveyor, ThreadQueue):
+    def __init__(self, stdscr, RequestConveyor, DialogsTransfer):
         # Init window
         y, x = stdscr.getmaxyx()
         self.box = stdscr.subwin(y, x // 4, 0, 0)
         self.window = self.box.derwin(y - 2, x // 4 - 2, 1, 1)
 
-        # Init thread
+        # Init threads
         self.RequestConveyor = RequestConveyor
-        self.ThreadQueue = ThreadQueue
-        self.updater = Thread(None, self.update, "Dialogs Updating Thread")
+        self.DialogsTransfer = DialogsTransfer
+        self.updater = Thread(None, self.update, "Dialogs Update Thread")
         self.updater.start()
+        self.redrawer = Thread(None, self.redraw, "Dialogs Redraw Thread")
+        self.redrawer.start()
 
     def update(self):
         while True:
-            self.box.clear()
-            self.box.box()
-            self.window.clear()
-            request = """   var dialogs = API.messages.getDialogs({"count": 20});
+            y, x = self.window.getmaxyx()
+            # How much dialogs should be get
+            # Added 5 to allow scrolling dialogs list
+            dialogsToGet = y + 10;
+            request = '   var dialogs = API.messages.getDialogs({"count": ' + str(dialogsToGet) +  """});
                             return {"total": dialogs.count,
                                 "total_unread": dialogs.unread_dialogs,
                                 "titles": dialogs.items@.message@.title,
                                 "unread": dialogs.items@.unread,
+                                "user_ids": dialogs.items@.message@.user_id,
                                 "name": API.users.get({"user_ids": dialogs.items@.message@.user_id})};"""
-            token = 0
-            self.RequestConveyor.add(request, token)
-            while not self.ThreadQueue.empty():
-                sleep(self.RequestConveyor.interval)
-            response = self.ThreadQueue.get()
-            dialogs = response['dialogs']
+            self.RequestConveyor.add(request, DialogsToken)
 
-            # Draw header
-            self.box.addstr(0, 2, "Dialogs: " + str(dialogs['total']), curses.A_BOLD)
-            _BOLDRED = curses.color_pair(1) | curses.A_BOLD
-            if dialogs['total_unread'] is not None:
-                self.box.addstr(" (" + str(dialogs['total_unread']) + ")", _BOLDRED)
-
-            # Draw dialogs list
-            y, x = self.window.getmaxyx()
-            for i in range(0, y):
-                # Mark unread dialogs 
-                self.window.addstr(i, 1, "" if dialogs['unread'][i] is None else 
-                                        "(" + str(dialogs['unread'][i]) + ") ", _BOLDRED)
-                cy, cx = self.window.getyx()
-                # Conference titles
-                if dialogs["titles"][i] == " ... ":
-                    self.window.addnstr(dialogs['name'][i]['first_name'] + " " + 
-                                        dialogs['name'][i]['last_name'], x - 1 - cx)
-                # Users' names
+            # Wait for response
+            waitingForResponse = True
+            while waitingForResponse:
+                if not self.DialogsTransfer.empty():
+                    waitingForResponse = False
                 else:
-                    self.window.addnstr(dialogs['titles'][i], x - 1 - cx, curses.A_BOLD)
-            self.box.refresh()
-            self.window.refresh()
-            sleep(self.interval)
+                    sleep(self.RequestConveyor.interval)
+            self.response = self.DialogsTransfer.get()
+            sleep(self.updateInterval)
 
+    def redraw(self):
+        while True:
+            self.box.erase()
+            self.window.erase()
+            y, x = self.window.getmaxyx()
+            _BOLDRED = curses.color_pair(1) | curses.A_BOLD
+            dialogs = self.response # Just to make code more readable
+            if len(dialogs) == 0:
+                sleep(self.redrawInterval)
+            else:
+
+                # Draw header
+                self.box.box()
+                self.box.addstr(0, 2, "Dialogs: " + str(dialogs['total']), curses.A_BOLD)
+                if dialogs['total_unread'] is not None:
+                    self.box.addstr(" (" + str(dialogs['total_unread']) + ")", _BOLDRED)
+
+                # Draw dialogs list
+                for i in range(0, y):
+                    # Mark unread dialogs 
+                    self.window.addstr(i, 1, "" if dialogs['unread'][i] is None else 
+                                            "(" + str(dialogs['unread'][i]) + ") ", _BOLDRED)
+                    cy, cx = self.window.getyx()
+                    # Users' names
+                    if dialogs['titles'][i] == " ... ":
+                        for j in range(0, len(dialogs['name']) - 1):
+                            if dialogs['user_ids'][i] == dialogs['name'][j]['id']:
+                                self.window.addnstr(dialogs['name'][j]['first_name'] + " " + 
+                                                    dialogs['name'][j]['last_name'], x - 1 - cx)
+                    # Conference titles
+                    else:
+                        self.window.addnstr(dialogs['titles'][i], x - 1 - cx, curses.A_BOLD)
+                self.box.refresh()
+                self.window.refresh()
+                sleep(self.redrawInterval)
 
 class _messages:
     active = False
@@ -100,15 +129,15 @@ class _requestConveyor:
     def call(self):
         while True:
             if len(self.RequestQueue) > 0:
-                self.ThreadQueue.put(
-                        {'dialogs': self.api.execute(v = _API_VERSION, code = self.RequestQueue[0]['request']), 
-                        'token': self.RequestQueue[0]['token']})
+                if self.RequestQueue[0]['token'] == DialogsToken:
+                   self.DialogsTransfer.put(self.api.execute(v = _API_VERSION, 
+                                            code = self.RequestQueue[0]['request']))
                 self.RequestQueue.pop(0)
             sleep(self.interval)
 
-    def __init__(self, api, ThreadQueue):
+    def __init__(self, api, DialogsTransfer):
         self.api = api
-        self.ThreadQueue = ThreadQueue
+        self.DialogsTransfer = DialogsTransfer
         self.timer = Thread(None, self.call, "Request Conveyor Thread")
         self.timer.start()
 
@@ -141,6 +170,7 @@ def auth(stdscr):
         else:
             api = vk.API(vksession)
             try:
+                # Just to check if API succesfully initializated
                 stdscr.addstr(7, 1, "Welcome, " + api.account.getProfileInfo(v = _API_VERSION)['first_name'])
             except vk.exceptions.VkAPIError:
                 stdscr.addstr(7, 1, "Cannot authorize")
@@ -158,14 +188,20 @@ def finit():
 
 
 def main(stdscr):
+    # Curses setup
     curses.start_color()
     curses.use_default_colors()
     curses.init_pair(1, curses.COLOR_RED, -1)
+    
+    # Authorization
     api = auth(stdscr)
 
-    ThreadQueue = Queue()
-    RequestConveyor = _requestConveyor(api, ThreadQueue)
-    Dialogs = _dialogs(stdscr, RequestConveyor, ThreadQueue)
+    # Data transfers between threads
+    DialogsTransfer = Queue()
+    MessagesTransfer = Queue()
+    # Threads and classes initialization
+    RequestConveyor = _requestConveyor(api, DialogsTransfer)
+    Dialogs = _dialogs(stdscr, RequestConveyor, DialogsTransfer)
     Messages = _messages(stdscr, RequestConveyor)
 
     stdscr.getch()
