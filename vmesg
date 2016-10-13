@@ -5,6 +5,7 @@ import vk
 from queue import Queue
 from threading import Thread
 from time import sleep
+import signal
 
 _VERSION = 0.1
 _APP_ID = 5586370
@@ -21,8 +22,6 @@ class _dialogs:
     active = True        
     # Every 'updateInterval' seconds ask for update
     updateInterval = 1
-    # Redraw every 'redrawInterval' seconds
-    redrawInterval = 0.2
     # Response to request
     response = {}
 
@@ -31,14 +30,16 @@ class _dialogs:
         y, x = stdscr.getmaxyx()
         self.box = stdscr.subwin(y, x // 4, 0, 0)
         self.window = self.box.derwin(y - 2, x // 4 - 2, 1, 1)
+        curses.init_pair(1, curses.COLOR_RED, -1)
+        curses.init_pair(2, 0, curses.COLOR_WHITE)
+        self.boldred = curses.color_pair(1) | curses.A_BOLD
 
         # Init threads
         self.RequestConveyor = RequestConveyor
         self.DialogsTransfer = DialogsTransfer
         self.updater = Thread(None, self.update, "Dialogs Update Thread")
+        self.updater.daemon = True
         self.updater.start()
-        self.redrawer = Thread(None, self.redraw, "Dialogs Redraw Thread")
-        self.redrawer.start()
 
     def update(self):
         while True:
@@ -63,58 +64,65 @@ class _dialogs:
                 else:
                     sleep(self.RequestConveyor.interval)
             self.response = self.DialogsTransfer.get()
+            self.redraw()
             sleep(self.updateInterval)
 
     def redraw(self):
-        while True:
-            self.box.erase()
-            self.window.erase()
-            y, x = self.window.getmaxyx()
-            _BOLDRED = curses.color_pair(1) | curses.A_BOLD
-            dialogs = self.response # Just to make code more readable
-            if len(dialogs) == 0:
-                sleep(self.redrawInterval)
+        self.box.erase()
+        y, x = self.window.getmaxyx()
+        dialogs = self.response # Just to make code more readable
+
+        # Draw header
+        self.box.box()
+        self.box.addstr(0, 2, "Dialogs: " + str(dialogs['total']), curses.A_BOLD)
+        if dialogs['total_unread'] is not None:
+            self.box.addstr(" (" + str(dialogs['total_unread']) + ")", self.boldred)
+
+        # Draw dialogs list
+        for i in range(0, y):
+            # Mark unread dialogs 
+            self.window.addstr(i, 1, "" if dialogs['unread'][i] is None else 
+                                    "(" + str(dialogs['unread'][i]) + ") ", self.boldred)
+            cy, cx = self.window.getyx()
+            # Background for selected dialog
+            color = curses.color_pair(2) if i == self.pos else 0
+            # Users' names
+            if dialogs['titles'][i] == " ... ":
+                for j in range(0, len(dialogs['name']) - 1):
+                    if dialogs['user_ids'][i] == dialogs['name'][j]['id']:
+                        self.window.addnstr(dialogs['name'][j]['first_name'] + " " + 
+                                            dialogs['name'][j]['last_name'], x - 1 - cx, color)
+            # Conference titles
             else:
+                self.window.addnstr(dialogs['titles'][i], x - 1 - cx, color | curses.A_BOLD)
+        self.box.refresh()
 
-                # Draw header
-                self.box.box()
-                self.box.addstr(0, 2, "Dialogs: " + str(dialogs['total']), curses.A_BOLD)
-                if dialogs['total_unread'] is not None:
-                    self.box.addstr(" (" + str(dialogs['total_unread']) + ")", _BOLDRED)
-
-                # Draw dialogs list
-                for i in range(0, y):
-                    # Mark unread dialogs 
-                    self.window.addstr(i, 1, "" if dialogs['unread'][i] is None else 
-                                            "(" + str(dialogs['unread'][i]) + ") ", _BOLDRED)
-                    cy, cx = self.window.getyx()
-                    # Users' names
-                    if dialogs['titles'][i] == " ... ":
-                        for j in range(0, len(dialogs['name']) - 1):
-                            if dialogs['user_ids'][i] == dialogs['name'][j]['id']:
-                                self.window.addnstr(dialogs['name'][j]['first_name'] + " " + 
-                                                    dialogs['name'][j]['last_name'], x - 1 - cx)
-                    # Conference titles
-                    else:
-                        self.window.addnstr(dialogs['titles'][i], x - 1 - cx, curses.A_BOLD)
-                self.box.refresh()
-                self.window.refresh()
-                sleep(self.redrawInterval)
 
 class _messages:
-    active = False
+    # Every 'updateInterval' seconds ask for update
+    updateInterval = 1
 
-    def __init__(self, stdscr, RequestConveyor):
-        self.RequestConveyor = RequestConveyor
+    def __init__(self, stdscr, RequestConveyor, MessagesTransfer):
 
         # Init window
         y, x = stdscr.getmaxyx()
         self.box = stdscr.subwin(y, 3 * x // 4, 0, x // 4)
-        self.box.box()
         self.window = self.box.derwin(y - 2, 3 * x // 4 - 2, 1, 1)
 
+        # Init threads
+        self.RequestConveyor = RequestConveyor
+        self.MessageTransfer = MessagesTransfer
+        self.updater = Thread(None, self.update, "Messages Update Thread")
+        self.updater.daemon = True
+        self.updater.start()
+
     def update(self):
-        pass
+        sleep(self.updateInterval)
+    
+    def redraw(self):
+        self.box.erase()
+        self.box.box()
+        self.box.refresh()
 
 
 class _requestConveyor:
@@ -122,6 +130,13 @@ class _requestConveyor:
     # Make requests every 'interval' seconds
     # VK API limits 3 requests per second
     interval = 0.35
+
+    def __init__(self, api, DialogsTransfer):
+        self.api = api
+        self.DialogsTransfer = DialogsTransfer
+        self.timer = Thread(None, self.call, "Request Conveyor Thread")
+        self.timer.daemon = True
+        self.timer.start()
 
     def add(self, request, token):
         self.RequestQueue.append({'request': request, 'token': token})
@@ -134,12 +149,6 @@ class _requestConveyor:
                                             code = self.RequestQueue[0]['request']))
                 self.RequestQueue.pop(0)
             sleep(self.interval)
-
-    def __init__(self, api, DialogsTransfer):
-        self.api = api
-        self.DialogsTransfer = DialogsTransfer
-        self.timer = Thread(None, self.call, "Request Conveyor Thread")
-        self.timer.start()
 
 
 def auth(stdscr):
@@ -183,15 +192,10 @@ def auth(stdscr):
     return api
 
 
-def finit():
-    curses.endwin()
-
-
 def main(stdscr):
     # Curses setup
     curses.start_color()
     curses.use_default_colors()
-    curses.init_pair(1, curses.COLOR_RED, -1)
     
     # Authorization
     api = auth(stdscr)
@@ -202,10 +206,31 @@ def main(stdscr):
     # Threads and classes initialization
     RequestConveyor = _requestConveyor(api, DialogsTransfer)
     Dialogs = _dialogs(stdscr, RequestConveyor, DialogsTransfer)
-    Messages = _messages(stdscr, RequestConveyor)
+    Messages = _messages(stdscr, RequestConveyor, MessagesTransfer)
 
-    stdscr.getch()
-    finit()
+    while True:
+        # Move through dialogs list
+        if Dialogs.active:
+            key = stdscr.getch()
+            if key == curses.KEY_UP:
+                Dialogs.pos -= 1 if Dialogs.pos > 0 else 0
+                Dialogs.redraw()
+            elif key == curses.KEY_DOWN:
+                Dialogs.pos += 1
+                Dialogs.redraw()
+            elif key == 0xA: # Enter key
+                Dialogs.active = False
+                Messages.active = True
+        elif Messages.active:
+            Messages.redraw()
+ 
+
+def finalizate(signum, frame):
+    curses.endwin()
+    exit()
+
 
 if __name__ == "__main__":
+    signal.signal(signal.SIGTERM, finalizate)
+    signal.signal(signal.SIGINT, finalizate)
     curses.wrapper(main)
