@@ -5,7 +5,7 @@ import vk
 from queue import Queue
 from threading import Thread
 from time import sleep
-import signal
+from signal import signal, SIGTERM, SIGINT
 
 _VERSION = 0.1
 _APP_ID = 5586370
@@ -45,21 +45,49 @@ class _dialogs:
     def update(self):
         while True:
             self.y, self.x = self.window.getmaxyx()
+            # Offset for getting dialogs
+            # Subtracted 5 to allow upscrolling dialogs list
+            dialogsOffset = 0 if self.top < 5 else self.top - 5 
             # How much dialogs should be got
-            # Added 30 to allow scrolling dialogs list
-            dialogsToGet = self.top + self.y + 30;
-            request = """ var dialogs = API.messages.getDialogs({
+            # Added 5 to allow downscrolling dialogs list
+            dialogsToGet = self.y + 5
+            request = """
+                        var dialogs = API.messages.getDialogs({
                             "count": """ + str(dialogsToGet) + """,
+                            "offset": """ + str(dialogsOffset) + """,
                             "v": """ + str(_API_VERSION) + """});
+                        var titles = dialogs.items@.message@.title;
+                        var user_ids = dialogs.items@.message@.user_id;
+                        var names = API.users.get({
+                            "user_ids": user_ids,
+                            "v": """ + str(_API_VERSION) + """});
+                        var isConference = [];
+                        var i = """ + str(dialogsToGet) + """;
+                        while (i > 0) {
+                            i = i - 1;
+                            var name;
+                            if (titles[i] == " ... ") {
+                                isConference.unshift(false);
+                                var j = 0;
+                                while (j < names.length) {
+                                    if (user_ids[i] == names[j].id) {
+                                        name = names[j].first_name + " " + names[j].last_name;
+                                    }
+                                    j = j + 1;
+                                }
+                                titles.splice(i, 1, name);
+                            }
+                            else {
+                                isConference.unshift(true);
+                            }
+                        }
                         return {
                             "total": dialogs.count,
                             "total_unread": dialogs.unread_dialogs,
-                            "titles": dialogs.items@.message@.title,
                             "unread": dialogs.items@.unread,
-                            "user_ids": dialogs.items@.message@.user_id,
-                            "name": API.users.get({
-                                    "user_ids": dialogs.items@.message@.user_id, 
-                                    "v": """ + str(_API_VERSION) + """})};"""
+                            "isConference": isConference,
+                            "titles": titles
+                        };"""
             self.RequestConveyor.add(request, DialogsToken)
 
             # Wait for response
@@ -85,22 +113,18 @@ class _dialogs:
 
         # Draw dialogs list
         for i in range(self.top, self.top + self.y):
-            # Mark unread dialogs 
-            self.window.addstr(i - self.top, 1, "" if dialogs['unread'][i] is None else 
-                                        "(" + str(dialogs['unread'][i]) + ") ", self.boldred)
-            cy, cx = self.window.getyx()
-            # Background for selected dialog
-            highlight = curses.A_REVERSE if i == self.pos else 0
-            # Users' names
-            if dialogs['titles'][i] == " ... ":
-                for j in range(0, len(dialogs['name']) - 1):
-                    if dialogs['user_ids'][i] == dialogs['name'][j]['id']:
-                        self.window.addnstr(dialogs['name'][j]['first_name'] + " " + 
-                                            dialogs['name'][j]['last_name'], self.x - 1 - cx, highlight)
-                        self.curr_id = dialogs['user_ids'][i]
-            # Conference titles
-            else:
-                self.window.addnstr(dialogs['titles'][i], self.x - 1 - cx, highlight | curses.A_BOLD)
+            try:
+                # Mark unread dialogs 
+                self.window.addstr(i - self.top, 1, "" if dialogs['unread'][i] is None else 
+                                            "(" + str(dialogs['unread'][i]) + ") ", self.boldred)
+                cy, cx = self.window.getyx()
+                # Background for selected dialog
+                highlight = curses.A_REVERSE if i == self.pos else 0
+                # Bold for conferences
+                highlight |= curses.A_BOLD if dialogs['isConference'][i] else 0
+                self.window.addnstr(dialogs['titles'][i], self.x - 1 - cx, highlight)
+            except:
+                pass
         self.box.refresh()
 
 
@@ -270,6 +294,6 @@ def finalizate(signum, frame):
 
 
 if __name__ == "__main__":
-    signal.signal(signal.SIGTERM, finalizate)
-    signal.signal(signal.SIGINT, finalizate)
+    signal(SIGTERM, finalizate)
+    signal(SIGINT, finalizate)
     curses.wrapper(main)
