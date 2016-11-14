@@ -7,16 +7,16 @@ from threading import Thread
 from time import sleep
 from signal import signal, SIGTERM, SIGINT
 
-_VERSION = 0.1
-_APP_ID = 5586370
-_API_VERSION = '5.57'
+VERSION = 0.1
+APP_ID = 5586370
+API_VERSION = '5.57'
 
 DialogsToken = 0
 MessagesToken = 1
 
 
 class _dialogs:
-    # top - index of top drawed dialog, pos - current position in list, 
+    # top - index of top drawed dialog, pos - current position in list,
     # curr_id - id of currently selected user
     top = 0
     pos = 0
@@ -30,8 +30,8 @@ class _dialogs:
     def __init__(self, stdscr, RequestConveyor, DialogsTransfer):
         # Init window
         y, x = stdscr.getmaxyx()
-        self.box = stdscr.subwin(y, x // 4, 0, 0)
-        self.window = self.box.derwin(y - 2, x // 4 - 2, 1, 1)
+        self.box = stdscr.subwin(y if y < 17 else 17, x // 4, 0, 0)
+        self.window = self.box.derwin(y - 2 if y < 17 else 15, x // 4 - 2, 1, 1)
         curses.init_pair(1, curses.COLOR_RED, -1)
         self.boldred = curses.color_pair(1) | curses.A_BOLD
 
@@ -46,32 +46,34 @@ class _dialogs:
         while True:
             self.y, self.x = self.window.getmaxyx()
             # Offset for getting dialogs
-            # Subtracted 5 to allow upscrolling dialogs list
-            dialogsOffset = 0 if self.top < 5 else self.top - 5 
+            # Subtracted 10 to allow upscrolling dialogs list
+            dialogsOffset = 0 if self.top < 10 else self.top - 10
             # How much dialogs should be got
-            # Added 5 to allow downscrolling dialogs list
-            dialogsToGet = self.y + 5
+            # Added 10 to allow downscrolling dialogs list
+            dialogsToGet = self.y + 10
             request = """
                         var dialogs = API.messages.getDialogs({
                             "count": """ + str(dialogsToGet) + """,
                             "offset": """ + str(dialogsOffset) + """,
-                            "v": """ + str(_API_VERSION) + """});
+                            "v": """ + API_VERSION + """});
                         var titles = dialogs.items@.message@.title;
                         var user_ids = dialogs.items@.message@.user_id;
                         var names = API.users.get({
                             "user_ids": user_ids,
-                            "v": """ + str(_API_VERSION) + """});
+                            "v": """ + API_VERSION + """});
                         var isConference = [];
                         var i = """ + str(dialogsToGet) + """;
                         while (i > 0) {
                             i = i - 1;
                             var name;
+							var j = 0;
                             if (titles[i] == " ... ") {
                                 isConference.unshift(false);
-                                var j = 0;
-                                while (j < names.length) {
+                                var breakFlag = false;
+                                while (j < names.length && !breakFlag) {
                                     if (user_ids[i] == names[j].id) {
                                         name = names[j].first_name + " " + names[j].last_name;
+                                        breakFlag = true;
                                     }
                                     j = j + 1;
                                 }
@@ -112,19 +114,17 @@ class _dialogs:
             self.box.addstr(" (" + str(dialogs['total_unread']) + ")", self.boldred)
 
         # Draw dialogs list
-        for i in range(self.top, self.top + self.y):
-            try:
-                # Mark unread dialogs 
-                self.window.addstr(i - self.top, 1, "" if dialogs['unread'][i] is None else 
-                                            "(" + str(dialogs['unread'][i]) + ") ", self.boldred)
-                cy, cx = self.window.getyx()
-                # Background for selected dialog
-                highlight = curses.A_REVERSE if i == self.pos else 0
-                # Bold for conferences
-                highlight |= curses.A_BOLD if dialogs['isConference'][i] else 0
-                self.window.addnstr(dialogs['titles'][i], self.x - 1 - cx, highlight)
-            except:
-                pass
+        for i in range(0, self.y):
+            # Mark unread dialogs
+            dialogNum = i + (self.top if self.top < 10 else 10)
+            self.window.addstr(i, 1, "" if dialogs['unread'][dialogNum] is None else
+                            "(" + str(dialogs['unread'][dialogNum]) + ") ", self.boldred)
+            cy, cx = self.window.getyx()
+            # Background for selected dialog
+            highlight = curses.A_REVERSE if dialogNum == self.pos else 0
+            # Bold for conferences
+            highlight |= curses.A_BOLD if dialogs['isConference'][dialogNum] else 0
+            self.window.addnstr(dialogs['titles'][dialogNum], self.x - 1 - cx, highlight)
         self.box.refresh()
 
 
@@ -134,7 +134,6 @@ class _messages:
     updateInterval = 1
 
     def __init__(self, stdscr, Dialogs, RequestConveyor, MessagesTransfer):
-
         # Init window
         y, x = stdscr.getmaxyx()
         self.box = stdscr.subwin(y, 3 * x // 4, 0, x // 4)
@@ -152,9 +151,9 @@ class _messages:
         # How much messages should be got
         messagesToGet = 10
         request = """   var  messages = API.messages.getHistory({
-                            "count": """ + str(messagesToGet) + """, 
-                            "peer_id": """ + str(self.Dialogs.curr_id) + """, 
-                            "v": """ + str(_API_VERSION) + """});
+                            "count": """ + str(messagesToGet) + """,
+                            "peer_id": """ + str(self.Dialogs.curr_id) + """,
+                            "v": """ + API_VERSION + """});
                         return messages.items@.body; """
 
         self.RequestConveyor.add(request, MessagesToken)
@@ -167,9 +166,9 @@ class _messages:
             else:
                 sleep(self.RequestConveyor.interval)
         self.response = self.MessagesTransfer.get()
-        self.redraw()       
+        self.redraw()
         sleep(self.updateInterval)
-    
+
     def redraw(self):
         messages = self.response # Just to make code more readable
         self.box.erase()
@@ -193,11 +192,11 @@ class _requestConveyor:
 
     def add(self, request, token):
         self.RequestQueue.append({'request': request, 'token': token})
-    
+
     def call(self):
         while True:
             if len(self.RequestQueue) > 0:
-                response = self.api.execute(v = _API_VERSION, 
+                response = self.api.execute(v = API_VERSION,
                                             code = self.RequestQueue[0]['request'])
                 if self.RequestQueue[0]['token'] == DialogsToken:
                     self.DialogsTransfer.put(response)
@@ -212,7 +211,7 @@ def auth(stdscr):
     notLogged = True
     while notLogged:
         # Get login and password
-        stdscr.addstr(1, 1, "vmesg " + str(_VERSION))
+        stdscr.addstr(1, 1, "vmesg " + str(VERSION))
         stdscr.addstr(3, 1, "Login: ")
         curses.curs_set(1)
         curses.echo()
@@ -226,17 +225,17 @@ def auth(stdscr):
 
         # Authorization
         try:
-            vksession = vk.AuthSession( app_id=_APP_ID, 
-                                        user_login=vklogin, 
-                                        user_password=vkpass, 
-                                        scope='messages' )
+            vksession = vk.AuthSession( app_id = APP_ID,
+                                        user_login = vklogin,
+                                        user_password = vkpass,
+                                        scope = 'messages' )
         except vk.exceptions.VkAuthError:
             stdscr.addstr(7, 1, "Incorrect login or password")
         else:
             api = vk.API(vksession)
             try:
-                # Just to check if API was initializated succesfully 
-                stdscr.addstr(7, 1, "Welcome, " + api.account.getProfileInfo(v = _API_VERSION)['first_name'])
+                # Just to check if API was initializated succesfully
+                stdscr.addstr(7, 1, "Welcome, " + api.account.getProfileInfo(v = API_VERSION)['first_name'])
             except vk.exceptions.VkAPIError:
                 stdscr.addstr(7, 1, "Cannot authorize")
             else:
@@ -252,7 +251,7 @@ def main(stdscr):
     # Curses setup
     curses.start_color()
     curses.use_default_colors()
-    
+
     # Authorization
     api = auth(stdscr)
 
@@ -286,7 +285,7 @@ def main(stdscr):
                 Messages.active = False
                 Dialogs.active = True
             Messages.redraw()
- 
+
 
 def finalizate(signum, frame):
     curses.endwin()
