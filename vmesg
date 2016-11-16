@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 
 import curses
-import vk
+try:
+    import vk
+except:
+    raise NameError("Unable to load VK module. Is it installed? (pip3 install vk)")
 from queue import Queue
 from threading import Thread
 from time import sleep
 from signal import signal, SIGTERM, SIGINT
 
-VERSION = 0.1
+VERSION = '00 Rei'
 APP_ID = 5586370
 API_VERSION = '5.57'
 
@@ -33,11 +36,12 @@ class _dialogs:
         self.box = stdscr.subwin(y if y < 17 else 17, x // 4, 0, 0)
         self.window = self.box.derwin(y - 2 if y < 17 else 15, x // 4 - 2, 1, 1)
         curses.init_pair(1, curses.COLOR_RED, -1)
-        self.boldred = curses.color_pair(1) | curses.A_BOLD
+        self.BOLD_RED = curses.color_pair(1) | curses.A_BOLD
 
         # Init threads
         self.RequestConveyor = RequestConveyor
         self.DialogsTransfer = DialogsTransfer
+        self.response = None
         self.updater = Thread(None, self.update, "Dialogs Update Thread")
         self.updater.daemon = True
         self.updater.start()
@@ -88,7 +92,8 @@ class _dialogs:
                             "total_unread": dialogs.unread_dialogs,
                             "unread": dialogs.items@.unread,
                             "isConference": isConference,
-                            "titles": titles
+                            "titles": titles,
+                            "uids": user_ids
                         };"""
             self.RequestConveyor.add(request, DialogsToken)
 
@@ -111,14 +116,14 @@ class _dialogs:
         self.box.box()
         self.box.addstr(0, 2, "Dialogs: " + str(dialogs['total']), curses.A_BOLD)
         if dialogs['total_unread'] is not None:
-            self.box.addstr(" (" + str(dialogs['total_unread']) + ")", self.boldred)
+            self.box.addstr(" (" + str(dialogs['total_unread']) + ")", self.BOLD_RED)
 
         # Draw dialogs list
         for i in range(0, self.y):
             # Mark unread dialogs
-            dialogNum = i + (self.top if self.top < 10 else 10)
+            dialogNum = i + (self.top if self.top < 10 else 10) # Just to make code more readable
             self.window.addstr(i, 1, "" if dialogs['unread'][dialogNum] is None else
-                            "(" + str(dialogs['unread'][dialogNum]) + ") ", self.boldred)
+                            "(" + str(dialogs['unread'][dialogNum]) + ") ", self.BOLD_RED)
             cy, cx = self.window.getyx()
             # Background for selected dialog
             highlight = curses.A_REVERSE if dialogNum == self.pos else 0
@@ -138,6 +143,9 @@ class _messages:
         y, x = stdscr.getmaxyx()
         self.box = stdscr.subwin(y, 3 * x // 4, 0, x // 4)
         self.window = self.box.derwin(y - 2, 3 * x // 4 - 2, 1, 1)
+        self.window.scrollok(True)
+        self.BOLD_RED = curses.color_pair(1) | curses.A_BOLD
+        self.startLine = 1
 
         # Init threads
         self.Dialogs = Dialogs
@@ -148,31 +156,51 @@ class _messages:
         self.updater.start()
 
     def update(self):
-        # How much messages should be got
-        messagesToGet = 10
-        request = """   var  messages = API.messages.getHistory({
-                            "count": """ + str(messagesToGet) + """,
-                            "peer_id": """ + str(self.Dialogs.curr_id) + """,
-                            "v": """ + API_VERSION + """});
-                        return messages.items@.body; """
+        while True:
+            if self.Dialogs.response:
+                # How much messages should be got
+                messagesToGet = 50
+                request = """   var to_id = """ + str(str(self.Dialogs.response
+                                                    ['uids'][self.Dialogs.pos])) + """;
+                                var  messages = API.messages.getHistory({
+                                    "count": """ + str(messagesToGet) + """,
+                                    "user_id": to_id,
+                                    "v": """ + API_VERSION + """});
+                                var names = API.users.get({
+                                    "user_ids": messages.items@.from_id,
+                                    "v": """ + API_VERSION + """});
+                                return {
+                                    "text": messages.items@.body,
+                                    "ids": messages.items@.from_id,
+                                    "names": names
+                                }; """
+                self.RequestConveyor.add(request, MessagesToken)
 
-        self.RequestConveyor.add(request, MessagesToken)
-
-        # Wait for response
-        waitingForResponse = True
-        while waitingForResponse:
-            if not self.MessagesTransfer.empty():
-                waitingForResponse = False
-            else:
-                sleep(self.RequestConveyor.interval)
-        self.response = self.MessagesTransfer.get()
-        self.redraw()
-        sleep(self.updateInterval)
+                # Wait for response
+                waitingForResponse = True
+                while waitingForResponse:
+                    if not self.MessagesTransfer.empty():
+                        waitingForResponse = False
+                    else:
+                        sleep(self.RequestConveyor.interval)
+                self.response = self.MessagesTransfer.get()
+                self.redraw()
+            sleep(self.updateInterval)
 
     def redraw(self):
         messages = self.response # Just to make code more readable
         self.box.erase()
         self.box.box()
+        cy = self.startLine # Row where message would be printed
+        for i in range(0, len(messages["text"])):
+            try:
+                name = messages["names"][messages["names"][0]["id"] != messages["ids"][i]]["first_name"]
+                self.window.addstr(cy, 1, name + ": ", self.BOLD_RED)
+                self.window.addstr(str(messages["text"][i]))
+                cy, cx = self.window.getyx()
+                cy += 1
+            except:
+                break
         self.box.refresh()
 
 
@@ -211,7 +239,7 @@ def auth(stdscr):
     notLogged = True
     while notLogged:
         # Get login and password
-        stdscr.addstr(1, 1, "vmesg " + str(VERSION))
+        stdscr.addstr(1, 1, "vmesg " + VERSION)
         stdscr.addstr(3, 1, "Login: ")
         curses.curs_set(1)
         curses.echo()
