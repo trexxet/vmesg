@@ -6,6 +6,7 @@ Python terminal messenger for [VK](http://vk.com)
 * vk module (can be installed by `pip3 install vk`)
 
 ## Controls
+* Ctrl-C - exit
 
 ##### If selecting dialog
 * Up/Down arrows - select dialog
@@ -20,6 +21,7 @@ Python terminal messenger for [VK](http://vk.com)
 - [x] Dialog selection
 - [x] Printing messages
 - [ ] Sending messages
+- [ ] Conferences
 
 ### v01 Shinji
 - [ ] Forwarded messages

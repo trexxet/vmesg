@@ -18,6 +18,9 @@ DialogsToken = 0
 MessagesToken = 1
 
 
+CMD_EXIT = ':q!'
+
+
 class _dialogs:
     # top - index of top drawed dialog, pos - current position in list,
     # curr_id - id of currently selected user
@@ -70,7 +73,7 @@ class _dialogs:
                         while (i > 0) {
                             i = i - 1;
                             var name;
-							var j = 0;
+                            var j = 0;
                             if (titles[i] == " ... ") {
                                 isConference.unshift(false);
                                 var breakFlag = false;
@@ -142,10 +145,12 @@ class _messages:
         # Init window
         y, x = stdscr.getmaxyx()
         self.box = stdscr.subwin(y, 3 * x // 4, 0, x // 4)
-        self.window = self.box.derwin(y - 2, 3 * x // 4 - 2, 1, 1)
+        self.window = self.box.derwin(y - 2, 3 * x // 4 - 4, 1, 2)
         self.window.scrollok(True)
         self.BOLD_RED = curses.color_pair(1) | curses.A_BOLD
-        self.startLine = 1
+        # Init message send window
+        self.msgBox = stdscr.subwin(3, 3 * x // 4, 0, x // 4)
+        self.msgWindow = self.msgBox.derwin(1, 3 * x // 4 - 2, 1, 1)
 
         # Init threads
         self.Dialogs = Dialogs
@@ -158,10 +163,11 @@ class _messages:
     def update(self):
         while True:
             if self.Dialogs.response:
+                # Selected dialog's id
+                self.active_id = self.Dialogs.response['uids'][self.Dialogs.pos]
                 # How much messages should be got
                 messagesToGet = 50
-                request = """   var to_id = """ + str(str(self.Dialogs.response
-                                                    ['uids'][self.Dialogs.pos])) + """;
+                request = """   var to_id = """ + str(self.active_id) + """;
                                 var  messages = API.messages.getHistory({
                                     "count": """ + str(messagesToGet) + """,
                                     "user_id": to_id,
@@ -187,18 +193,35 @@ class _messages:
                 self.redraw()
             sleep(self.updateInterval)
 
+    def send(self):
+        curses.echo()
+        message = self.msgWindow.getstr(1, 1)
+        curses.noecho()
+        if message == CMD_EXIT:
+            self.active = False
+            self.Dialogs.active = True
+            return
+        request = """   var to_id = """ + str(self.active_id) + """;
+                        API.messages.send({
+                            "user_id": to_id,
+                            "message": " """ + str(message) + """ ",
+                            "v": """ + API_VERSION + """});
+                        return 1;"""
+        self.RequestConveyor.add(request, -1)
+
     def redraw(self):
         messages = self.response # Just to make code more readable
         self.box.erase()
         self.box.box()
-        cy = self.startLine # Row where message would be printed
+        y, x = self.window.getmaxyx()
+        cy = y # Row where message would be printed
         for i in range(0, len(messages["text"])):
             try:
                 name = messages["names"][messages["names"][0]["id"] != messages["ids"][i]]["first_name"]
-                self.window.addstr(cy, 1, name + ": ", self.BOLD_RED)
-                self.window.addstr(str(messages["text"][i]))
-                cy, cx = self.window.getyx()
-                cy += 1
+                msg = str(messages["text"][i])
+                cy -= (len(name) + len(msg)) // (x - 2) + 1
+                self.window.addstr(cy, 0, name + ": ", self.BOLD_RED)
+                self.window.addstr(msg)
             except:
                 break
         self.box.refresh()
@@ -292,9 +315,9 @@ def main(stdscr):
     Messages = _messages(stdscr, Dialogs, RequestConveyor, MessagesTransfer)
 
     while True:
-        key = stdscr.getch()
         # Move through dialogs list
         if Dialogs.active:
+            key = stdscr.getch()
             if key == curses.KEY_UP:
                 Dialogs.pos -= 1 if Dialogs.pos > 0 else 0
                 if Dialogs.pos < Dialogs.top:
@@ -308,11 +331,9 @@ def main(stdscr):
             elif key == 0x0A: # Enter key
                 Dialogs.active = False
                 Messages.active = True
-        elif Messages.active:
-            if key == 0x1B: # Escape key
-                Messages.active = False
-                Dialogs.active = True
-            Messages.redraw()
+        else:
+            pass
+            # Messages.send()
 
 
 def finalizate(signum, frame):
