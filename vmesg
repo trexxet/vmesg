@@ -15,19 +15,18 @@ APP_ID = 5586370
 API_VERSION = '5.57'
 
 DialogsToken, MessagesToken = 0, 1
+Dialogs, Messages, RequestConveyor, DialogsTransfer, MessagesTransfer = (None,)*5
 
 CMD_EXIT = ':q!'
-
-Dialogs, Messages, RequestConveyor, DialogsTransfer, MessagesTransfer = (None,)*5
 
 
 class _dialogs:
     global RequestConveyor, DialogsTransfer
-    # top - index of top drawed dialog, pos - current position in list,
-    # curr_id - id of currently selected user
-    top, pos = 0, 0
-    curr_id = 0
     active = True
+    # Current page
+    page = 0
+    # Current position on page
+    pos = 0
     # Every 'updateInterval' seconds ask for update
     updateInterval = 1
     # Response to request
@@ -37,9 +36,11 @@ class _dialogs:
         # Init window
         y, x = stdscr.getmaxyx()
         maxBoxHeight = 17
-        self.box = stdscr.subwin(y if y < maxBoxHeight else maxBoxHeight, x // 4, 0, 0)
-        self.window = self.box.derwin(y - 2 if y < maxBoxHeight else maxBoxHeight - 2,
-                                        x // 4 - 2, 1, 1)
+        self.y = y - 2 if y < maxBoxHeight else maxBoxHeight - 2
+        # Messages window width is calculated relative to dialogs window width
+        self.x = x // 4 - 2
+        self.box = stdscr.subwin(self.y + 2, self.x + 2, 0, 0)
+        self.window = self.box.derwin(self.y, self.x, 1, 1)
         curses.init_pair(1, curses.COLOR_RED, -1)
         self.BOLD_RED = curses.color_pair(1) | curses.A_BOLD
 
@@ -51,14 +52,10 @@ class _dialogs:
 
     def update(self):
         while True:
-            self.y, self.x = self.window.getmaxyx()
             # Offset for getting dialogs
-            upscrollPreload = 7
-            dialogsOffset = 0 if self.top < upscrollPreload else self.top - upscrollPreload
+            dialogsOffset = self.page * self.y
             # How much dialogs should be got
-            downscrollPreload = 7
-            dialogsToGet = self.y + downscrollPreload
-            dialogsToGet += self.top if self.top < upscrollPreload else upscrollPreload
+            dialogsToGet = self.y
             # Form request
             request = """
                         var dialogs = API.messages.getDialogs({
@@ -113,6 +110,24 @@ class _dialogs:
             self.redraw()
             sleep(self.updateInterval)
 
+    def keyboardHandler(self, key):
+        if key == curses.KEY_UP:
+            if self.pos > 0:
+                self.pos -= 1
+            elif self.pos == 0 and self.page > 0:
+                self.page -=1
+                self.pos = self.y - 1
+            self.redraw()
+        elif key == curses.KEY_DOWN:
+            self.pos += (self.pos < self.response['total'])
+            if self.pos > self.y - 1:
+                self.page += 1
+                self.pos = 0
+            self.redraw()
+        elif key == 0x0A: # Enter key
+            self.active = False
+            Messages.active = True
+
     def redraw(self):
         dialogs = self.response # Just to make code more readable
         self.box.erase()
@@ -124,22 +139,18 @@ class _dialogs:
             self.box.addstr(" (" + str(dialogs['total_unread']) + ")", self.BOLD_RED)
 
         # Draw dialogs list
-        try:
-            for i in range(0, self.y):
-                # Mark unread dialogs
-                dialogNum = i + (self.top if self.top < 10 else 10) # Just to make code more readable
-                self.window.addstr(i, 1, "" if dialogs['unread'][dialogNum] is None else
-                                "(" + str(dialogs['unread'][dialogNum]) + ") ", self.BOLD_RED)
-                cy, cx = self.window.getyx()
-                # Background for selected dialog
-                highlight = curses.A_REVERSE if dialogNum == self.pos else 0
-                # Bold for conferences
-                highlight |= curses.A_BOLD if dialogs['isConference'][dialogNum] else 0
-                self.window.addnstr(dialogs['titles'][dialogNum], self.x - 1 - cx, highlight)
-        except:
-            pass
+        for i in range(0, self.y):
+            # Mark unread dialogs
+            self.window.addstr(i, 1, "" if dialogs['unread'][i] is None else
+                            "(" + str(dialogs['unread'][i]) + ") ", self.BOLD_RED)
+            cy, cx = self.window.getyx()
+            # Background for selected dialog
+            highlight = curses.A_REVERSE if i == self.pos else 0
+            # Bold for conferences
+            highlight |= curses.A_BOLD if dialogs['isConference'][i] else 0
+            self.window.addnstr(dialogs['titles'][i], self.x - 1 - cx, highlight)
         # TODO: remove debug info
-        self.box.addstr(16, 0, str(self.top))
+        self.box.addstr(16, 0, str(self.page))
         self.box.addstr(16, 5, str(self.pos))
         self.box.refresh()
 
@@ -153,8 +164,10 @@ class _messages:
     def __init__(self, stdscr):
         # Init window
         y, x = stdscr.getmaxyx()
-        self.box = stdscr.subwin(y, 3 * x // 4, 0, x // 4)
-        self.window = self.box.derwin(y - 2, 3 * x // 4 - 4, 1, 2)
+        self.y = y - 2
+        self.x = x - Dialogs.x - 6
+        self.box = stdscr.subwin(self.y + 2, self.x + 4, 0, Dialogs.x + 2)
+        self.window = self.box.derwin(self.y, self.x, 1, 2)
         self.window.scrollok(True)
         self.BOLD_RED = curses.color_pair(1) | curses.A_BOLD
         # Init message send window
@@ -222,13 +235,12 @@ class _messages:
         messages = self.response # Just to make code more readable
         self.box.erase()
         self.box.box()
-        y, x = self.window.getmaxyx()
-        cy = y # Row where message would be printed
+        cy = self.y # Row where message would be printed
         for i in range(0, len(messages["text"])):
             try:
                 name = messages["names"][messages["names"][0]["id"] != messages["ids"][i]]["first_name"]
                 msg = str(messages["text"][i])
-                cy -= (len(name) + len(msg)) // (x - 2) + 1
+                cy -= (len(name) + len(msg)) // (self.x - 2) + 1
                 self.window.addstr(cy, 0, name + ": ", self.BOLD_RED)
                 self.window.addstr(msg)
             except:
@@ -311,19 +323,7 @@ def keyboardHandler(stdscr):
         # Move through dialogs list
         if Dialogs.active:
             key = stdscr.getch()
-            if key == curses.KEY_UP:
-                Dialogs.pos -= 1 if Dialogs.pos > 0 else 0
-                if Dialogs.pos < Dialogs.top:
-                    Dialogs.top -= 1
-                Dialogs.redraw()
-            elif key == curses.KEY_DOWN:
-                Dialogs.pos += 1 if Dialogs.pos < Dialogs.response['total'] else 0
-                if Dialogs.pos - Dialogs.top  == Dialogs.y:
-                    Dialogs.top += 1
-                Dialogs.redraw()
-            elif key == 0x0A: # Enter key
-                Dialogs.active = False
-                Messages.active = True
+            Dialogs.keyboardHandler(key)
         else:
             pass
             # Messages.send()
