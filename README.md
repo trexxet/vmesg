@@ -21,7 +21,7 @@ Python terminal messenger for [VK](http://vk.com)
 - [x] Dialog selection
 - [x] Printing messages
 - [ ] Sending messages
-- [ ] Conferences
+- [x] Conferences
 
 ### v01 Shinji
 - [ ] Forwarded messages

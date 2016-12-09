@@ -95,7 +95,8 @@ class _dialogs:
                             "unread": dialogs.items@.unread,
                             "isConference": isConference,
                             "titles": titles,
-                            "uids": user_ids
+                            "uids": user_ids,
+                            "cids": dialogs.items@.message@.chat_id
                         };"""
             RequestConveyor.add(request, DialogsToken)
 
@@ -184,7 +185,10 @@ class _messages:
             try:
                 if Dialogs.response:
                     # Selected dialog's id
-                    self.active_id = Dialogs.response['uids'][Dialogs.pos]
+                    if Dialogs.response['isConference'][Dialogs.pos]:
+                        self.active_id = Dialogs.response['cids'][Dialogs.pos] + 2000000000
+                    else:
+                        self.active_id = Dialogs.response['uids'][Dialogs.pos]
                     # How much messages should be got
                     messagesToGet = 50
                     request = """   var to_id = """ + str(self.active_id) + """;
@@ -237,10 +241,16 @@ class _messages:
         self.box.box()
         cy = self.y # Row where message would be printed
         for i in range(0, len(messages["text"])):
-            try:
+            if Dialogs.response['isConference'][Dialogs.pos]:
+                for _name in messages["names"]:
+                    if _name["id"] == messages["ids"][i]:
+                        name = _name["first_name"]
+                        break
+            else:
                 name = messages["names"][messages["names"][0]["id"] != messages["ids"][i]]["first_name"]
-                msg = str(messages["text"][i])
-                cy -= (len(name) + len(msg)) // (self.x - 2) + 1
+            msg = str(messages["text"][i])
+            cy -= (len(name) + len(msg)) // (self.x - 2) + 1
+            try:
                 self.window.addstr(cy, 0, name + ": ", self.BOLD_RED)
                 self.window.addstr(msg)
             except:
@@ -267,13 +277,17 @@ class _requestConveyor:
     def call(self):
         while True:
             if len(self.RequestQueue) > 0:
-                response = self.api.execute(v = API_VERSION,
-                                            code = self.RequestQueue[0]['request'])
-                if self.RequestQueue[0]['token'] == DialogsToken:
-                    DialogsTransfer.put(response)
-                elif self.RequestQueue[0]['token'] == MessagesToken:
-                    MessagesTransfer.put(response)
-                self.RequestQueue.pop(0)
+                try:
+                    response = self.api.execute(v = API_VERSION,
+                                                code = self.RequestQueue[0]['request'])
+                except:
+                    pass
+                else:
+                    if self.RequestQueue[0]['token'] == DialogsToken:
+                        DialogsTransfer.put(response)
+                    elif self.RequestQueue[0]['token'] == MessagesToken:
+                        MessagesTransfer.put(response)
+                    self.RequestQueue.pop(0)
             sleep(self.interval)
 
 
