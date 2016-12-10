@@ -13,7 +13,8 @@ Python terminal messenger for [VK](http://vk.com)
 * Enter - enter dialog
 
 ##### If inside dialog
-* Esc - return to dialog selection
+* Hold Esc - return to dialog selection
+* Enter - type message or send message
 
 ## TODO and versions
 
