@@ -20,7 +20,7 @@ Python terminal messenger for [VK](http://vk.com)
 ### v00 Rei
 - [x] Dialog selection
 - [x] Printing messages
-- [ ] Sending messages
+- [x] Sending messages
 - [x] Conferences
 
 ### v01 Shinji
