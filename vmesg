@@ -120,6 +120,11 @@ class _dialogs:
                 self.pos = 0
             self.redraw()
         elif key == 0x0A: # Enter key
+            # Selected dialog's id
+            if self.response['isConference'][self.pos]:
+                Messages.active_id = self.response['cids'][self.pos] + 2000000000
+            else:
+                Messages.active_id = self.response['uids'][self.pos]
             self.active = False
             Messages.active = True
             self.redraw()
@@ -167,6 +172,7 @@ class _messages:
         # Init message send window
         self.msgBox = stdscr.subwin(4, self.x + 4, self.y + 2, Dialogs.x + 2)
         self.msgWindow = self.msgBox.derwin(2, self.x + 1, 1, 2)
+        self.msgWindow.scrollok(True)
 
         # Init thread
         self.updater = Thread(None, self.update, "Messages Update Thread")
@@ -176,11 +182,6 @@ class _messages:
     def update(self):
         while True:
             if Dialogs.response and self.active:
-                # Selected dialog's id
-                if Dialogs.response['isConference'][Dialogs.pos]:
-                    self.active_id = Dialogs.response['cids'][Dialogs.pos] + 2000000000
-                else:
-                    self.active_id = Dialogs.response['uids'][Dialogs.pos]
                 # How much messages should be got
                 messagesToGet = self.y
                 request = """   var to_id = """ + str(self.active_id) + """;
@@ -239,7 +240,7 @@ class _messages:
         self.box.box()
         cy = self.y # Row where message would be printed
         for i in range(0, len(messages["text"])):
-            if Dialogs.response['isConference'][Dialogs.pos]:
+            if self.active_id >= 2000000000:
                 for _name in messages["names"]:
                     if _name["id"] == messages["ids"][i]:
                         name = _name["first_name"]
